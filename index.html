@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#111111">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <link rel="manifest" href="manifest.json">
+  <title>Turntable Capture</title>
+
+  <style>
+    * { box-sizing: border-box; }
+
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      background: #111;
+      color: #fff;
+      text-align: center;
+    }
+
+    header {
+      padding: 14px;
+      font-size: 20px;
+      font-weight: bold;
+      background: #1a1a1a;
+      letter-spacing: 1px;
+    }
+
+    .container {
+      padding: 12px;
+      max-width: 500px;
+      margin: 0 auto;
+    }
+
+    label {
+      display: block;
+      text-align: left;
+      font-size: 13px;
+      color: #aaa;
+      margin: 10px 0 3px;
+    }
+
+    input[type="text"],
+    input[type="number"] {
+      width: 100%;
+      padding: 10px;
+      border-radius: 8px;
+      border: 1px solid #333;
+      background: #222;
+      color: #fff;
+      font-size: 16px;
+    }
+
+    .row {
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    button {
+      flex: 1;
+      padding: 13px;
+      border: none;
+      border-radius: 10px;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+      transition: opacity 0.2s;
+    }
+
+    button:disabled { opacity: 0.4; cursor: default; }
+
+    .btn-start  { background: #28a745; color: #fff; }
+    .btn-stop   { background: #dc3545; color: #fff; }
+    .btn-zip    { background: #007bff; color: #fff; }
+    .btn-clear  { background: #555; color: #fff; }
+
+    video {
+      width: 100%;
+      max-height: 260px;
+      border-radius: 12px;
+      margin-top: 12px;
+      background: #000;
+    }
+
+    .progress-wrap {
+      margin: 12px 0 4px;
+    }
+
+    progress {
+      width: 100%;
+      height: 12px;
+      border-radius: 6px;
+      overflow: hidden;
+      accent-color: #28a745;
+    }
+
+    .progress-label {
+      font-size: 15px;
+      font-weight: bold;
+      margin-top: 4px;
+    }
+
+    .status {
+      font-size: 13px;
+      color: #aaa;
+      min-height: 20px;
+      margin-bottom: 8px;
+    }
+
+    .gallery {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 5px;
+      margin-top: 10px;
+    }
+
+    .gallery img {
+      width: 100%;
+      aspect-ratio: 1;
+      object-fit: cover;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+
+    .gallery img:hover { opacity: 0.8; }
+
+    canvas { display: none; }
+
+    #install-banner {
+      display: none;
+      margin-top: 10px;
+      padding: 10px;
+      background: #1e3a5f;
+      border-radius: 8px;
+      font-size: 13px;
+    }
+
+    #install-banner button {
+      margin-top: 6px;
+      background: #007bff;
+      color: #fff;
+      padding: 8px 16px;
+      flex: none;
+      width: auto;
+    }
+  </style>
+</head>
+
+<body>
+
+<header>&#128247; Turntable Capture</header>
+
+<div class="container">
+
+  <label for="ip">ESP8266 IP Address</label>
+  <input id="ip" type="text" placeholder="e.g. 192.168.4.1" autocomplete="off" autocapitalize="none">
+
+  <label for="count">Number of Photos</label>
+  <input id="count" type="number" value="12" min="1" max="360">
+
+  <label for="delay">Extra delay after rotation (ms)</label>
+  <input id="delay" type="number" value="500" min="0" max="10000" step="100">
+
+  <div class="row">
+    <button class="btn-start" id="btnStart" onclick="startCapture()">&#9654; Start</button>
+    <button class="btn-stop"  id="btnStop"  onclick="stopCapture()" disabled>&#9632; Stop</button>
+  </div>
+
+  <video id="video" autoplay playsinline muted></video>
+
+  <div class="progress-wrap">
+    <progress id="progressBar" max="100" value="0"></progress>
+    <div class="progress-label" id="progressLabel">Idle</div>
+  </div>
+  <div class="status" id="status"></div>
+
+  <div class="row" id="downloadRow" style="display:none">
+    <button class="btn-zip"   onclick="downloadZip()">&#128229; Download ZIP</button>
+    <button class="btn-clear" onclick="clearSession()">&#128465; Clear</button>
+  </div>
+
+  <div class="gallery" id="gallery"></div>
+
+  <div id="install-banner">
+    &#128640; Install this app on your home screen for the best experience.
+    <br>
+    <button onclick="installPwa()">Install App</button>
+  </div>
+
+</div>
+
+<canvas id="canvas"></canvas>
+
+<!-- JSZip for single-file download -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+
+<script>
+  let images = [];
+  let running = false;
+  let deferredInstallPrompt = null;
+
+  // --- PWA install prompt ---
+  window.addEventListener('beforeinstallprompt', e => {
+    e.preventDefault();
+    deferredInstallPrompt = e;
+    document.getElementById('install-banner').style.display = 'block';
+  });
+
+  function installPwa() {
+    if (!deferredInstallPrompt) return;
+    deferredInstallPrompt.prompt();
+    deferredInstallPrompt.userChoice.then(() => {
+      deferredInstallPrompt = null;
+      document.getElementById('install-banner').style.display = 'none';
+    });
+  }
+
+  // --- Service Worker registration (relative path works at any subfolder depth) ---
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('./sw.js');
+  }
+
+  // --- Capture flow ---
+  async function startCapture() {
+    if (running) return;
+
+    const ip    = document.getElementById('ip').value.trim();
+    const count = parseInt(document.getElementById('count').value);
+    const extra = parseInt(document.getElementById('delay').value) || 500;
+
+    if (!ip || !count || count < 1) {
+      alert('Please enter a valid ESP IP and photo count.');
+      return;
+    }
+
+    running = true;
+    images  = [];
+    document.getElementById('gallery').innerHTML = '';
+    document.getElementById('downloadRow').style.display = 'none';
+    setButtons(true);
+
+    const angle = 360 / count;
+
+    setStatus('Starting camera...');
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } }
+      });
+    } catch (err) {
+      setStatus('Camera error: ' + err.message);
+      running = false;
+      setButtons(false);
+      return;
+    }
+    const video = document.getElementById('video');
+    video.srcObject = stream;
+    await waitForVideoReady(video);
+    await sleep(1500); // camera warm-up
+
+    for (let i = 0; i < count && running; i++) {
+      setProgress(i, count);
+      setStatus('Capturing image ' + (i + 1) + '...');
+
+      const blob = await captureImage(video);
+      images.push(blob);
+      addThumbnail(blob, i);
+
+      setStatus('Rotating ' + angle.toFixed(1) + '\u00b0...');
+      const rotated = await rotateEsp(ip, angle);
+      if (!rotated) {
+        setStatus('\u26a0\ufe0f ESP connection failed \u2014 check IP and CORS header.');
+        running = false;
+        break;
+      }
+
+      // Wait for motor to finish (poll /status), then add extra delay
+      await waitForMotorDone(ip, 15000);
+      if (extra > 0) await sleep(extra);
+    }
+
+    // Stop camera stream
+    stream.getTracks().forEach(t => t.stop());
+    video.srcObject = null;
+
+    if (running) {
+      setProgress(count, count);
+      setStatus('Done! ' + images.length + ' images captured.');
+    } else {
+      setStatus('Stopped. ' + images.length + ' images captured.');
+    }
+
+    running = false;
+    setButtons(false);
+    if (images.length > 0) {
+      document.getElementById('downloadRow').style.display = 'flex';
+    }
+  }
+
+  function stopCapture() {
+    running = false;
+    setStatus('Stopping after current step...');
+  }
+
+  // --- Helpers ---
+  function waitForVideoReady(video) {
+    return new Promise(resolve => {
+      if (video.readyState >= 2) { resolve(); return; }
+      video.addEventListener('canplay', resolve, { once: true });
+    });
+  }
+
+  function captureImage(video) {
+    return new Promise(resolve => {
+      const canvas = document.getElementById('canvas');
+      canvas.width  = video.videoWidth;
+      canvas.height = video.videoHeight;
+      canvas.getContext('2d').drawImage(video, 0, 0);
+      canvas.toBlob(blob => resolve(blob), 'image/jpeg', 0.92);
+    });
+  }
+
+  function addThumbnail(blob, index) {
+    const img = document.createElement('img');
+    img.src   = URL.createObjectURL(blob);
+    img.title = 'Image ' + (index + 1);
+    img.addEventListener('click', () => {
+      const a = document.createElement('a');
+      a.href     = img.src;
+      a.download = 'img_' + String(index + 1).padStart(3, '0') + '.jpg';
+      a.click();
+    });
+    document.getElementById('gallery').appendChild(img);
+  }
+
+  async function rotateEsp(ip, angle) {
+    try {
+      const resp = await fetch(`http://${ip}/rotate?motor=1&angle=${angle}`, { signal: AbortSignal.timeout(8000) });
+      return resp.ok;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  async function waitForMotorDone(ip, timeoutMs) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      try {
+        const resp = await fetch(`http://${ip}/status`, { signal: AbortSignal.timeout(3000) });
+        if (resp.ok) {
+          const data = await resp.json();
+          if (!data.running) return;
+        }
+      } catch (_) {}
+      await sleep(300);
+    }
+  }
+
+  function setProgress(done, total) {
+    const pct = Math.round((done / total) * 100);
+    document.getElementById('progressBar').value = pct;
+    document.getElementById('progressLabel').innerText =
+      done < total ? `Photo ${done + 1} / ${total}` : `Complete (${total} photos)`;
+  }
+
+  function setStatus(msg) {
+    document.getElementById('status').innerText = msg;
+  }
+
+  function setButtons(capturing) {
+    document.getElementById('btnStart').disabled = capturing;
+    document.getElementById('btnStop').disabled  = !capturing;
+  }
+
+  function sleep(ms) {
+    return new Promise(r => setTimeout(r, ms));
+  }
+
+  // --- ZIP download ---
+  async function downloadZip() {
+    if (images.length === 0) return;
+    setStatus('Creating ZIP...');
+    const zip = new JSZip();
+    const folder = zip.folder('turntable_scan');
+    images.forEach((blob, i) => {
+      folder.file('img_' + String(i + 1).padStart(3, '0') + '.jpg', blob);
+    });
+    const content = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 3 } });
+    const a = document.createElement('a');
+    a.href     = URL.createObjectURL(content);
+    a.download = 'turntable_scan.zip';
+    a.click();
+    setStatus('ZIP downloaded.');
+  }
+
+  function clearSession() {
+    images = [];
+    document.getElementById('gallery').innerHTML = '';
+    document.getElementById('progressBar').value = 0;
+    document.getElementById('progressLabel').innerText = 'Idle';
+    setStatus('');
+    document.getElementById('downloadRow').style.display = 'none';
+  }
+</script>
+
+</body>
+</html>

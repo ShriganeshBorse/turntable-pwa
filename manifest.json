@@ -1,0 +1,19 @@
+{
+    "name": "Turntable Capture",
+    "short_name": "Turntable",
+    "description": "Mobile photogrammetry capture tool for ESP8266 turntable",
+    "start_url": "./index.html",
+    "scope": "./",
+    "display": "standalone",
+    "orientation": "portrait",
+    "background_color": "#111111",
+    "theme_color": "#111111",
+    "icons": [
+        {
+            "src": "icon.svg",
+            "sizes": "any",
+            "type": "image/svg+xml",
+            "purpose": "any"
+        }
+    ]
+}
