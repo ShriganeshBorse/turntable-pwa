@@ -174,8 +174,12 @@
   </div>
 
   <div id="mixed-content-warning" style="display:none; margin-top:10px; padding:10px; background:#4a1a00; border-radius:8px; font-size:12px; text-align:left; line-height:1.5">
-    &#9888; <strong>Mixed Content Blocked</strong> — Chrome blocks HTTP connections from HTTPS pages.<br>
-    To fix: tap the <strong>lock icon</strong> in Chrome&#39;s address bar &rarr; <strong>Site settings</strong> &rarr; <strong>Insecure content</strong> &rarr; <strong>Allow</strong>, then reload.
+    &#9888; <strong>HTTPS to HTTP is blocked by Chrome</strong>.<br>
+    This app runs on HTTPS (GitHub Pages), but your ESP API is HTTP. Chrome can still block these requests even after flags/site-setting changes.
+    <br><br>
+    Reliable options:
+    <br>1) Serve ESP API over HTTPS, or
+    <br>2) Run this app from <strong>http://localhost</strong> on the phone (localhost is camera-safe), then call ESP over HTTP.
   </div>
 
   <video id="video" autoplay playsinline muted></video>
@@ -355,21 +359,17 @@
 
   // Returns {ok: true} or {ok: false, error: '...', mixedContent: bool}
   async function rotateEsp(ip, angle) {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 8000);
     try {
-      const resp = await fetch(`http://${ip}/rotate?angle=${angle}`, { signal: ctrl.signal });
-      clearTimeout(timer);
+      const resp = await fetchWithTimeout(`http://${ip}/rotate?angle=${angle}`, 8000);
       if (!resp.ok) return { ok: false, error: 'ESP returned ' + resp.status + '. Check IP.' };
       return { ok: true };
     } catch (e) {
-      clearTimeout(timer);
       if (e.name === 'AbortError') {
         return { ok: false, error: 'Request timed out. Is the ESP IP correct?' };
       }
       const isMixed = window.location.protocol === 'https:';
       const msg = isMixed
-        ? 'Cannot reach ESP over HTTP from HTTPS page (mixed content). See warning below.'
+        ? 'Request blocked by browser security (HTTPS app -> HTTP ESP). See warning below.'
         : 'Connection failed: ' + (e.message || e);
       return { ok: false, error: msg, mixedContent: isMixed };
     }
@@ -398,7 +398,7 @@
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       try {
-        const resp = await fetch(`http://${ip}/status`, { signal: AbortSignal.timeout(3000) });
+        const resp = await fetchWithTimeout(`http://${ip}/status`, 3000);
         if (resp.ok) {
           const data = await resp.json();
           if (!data.running) return;
@@ -406,6 +406,12 @@
       } catch (_) {}
       await sleep(300);
     }
+  }
+
+  function fetchWithTimeout(url, timeoutMs) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    return fetch(url, { signal: ctrl.signal }).finally(() => clearTimeout(timer));
   }
 
   function setProgress(done, total) {
