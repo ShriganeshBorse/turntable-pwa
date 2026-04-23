@@ -74,6 +74,7 @@
 
     .btn-start  { background: #28a745; color: #fff; }
     .btn-stop   { background: #dc3545; color: #fff; }
+    .btn-test   { background: #ff9800; color: #fff; }
     .btn-zip    { background: #007bff; color: #fff; }
     .btn-clear  { background: #555; color: #fff; }
 
@@ -168,6 +169,14 @@
     <button class="btn-start" id="btnStart" onclick="startCapture()">&#9654; Start</button>
     <button class="btn-stop"  id="btnStop"  onclick="stopCapture()" disabled>&#9632; Stop</button>
   </div>
+  <div class="row">
+    <button class="btn-test" id="btnTest" onclick="testRotate()">&#8635; Test Rotate (10&deg;)</button>
+  </div>
+
+  <div id="mixed-content-warning" style="display:none; margin-top:10px; padding:10px; background:#4a1a00; border-radius:8px; font-size:12px; text-align:left; line-height:1.5">
+    &#9888; <strong>Mixed Content Blocked</strong> — Chrome blocks HTTP connections from HTTPS pages.<br>
+    To fix: tap the <strong>lock icon</strong> in Chrome&#39;s address bar &rarr; <strong>Site settings</strong> &rarr; <strong>Insecure content</strong> &rarr; <strong>Allow</strong>, then reload.
+  </div>
 
   <video id="video" autoplay playsinline muted></video>
 
@@ -200,6 +209,7 @@
 <script>
   let images = [];
   let running = false;
+  let stoppedByUser = false;
   let deferredInstallPrompt = null;
 
   // --- PWA install prompt ---
@@ -238,8 +248,10 @@
 
     running = true;
     images  = [];
+    stoppedByUser = false;
     document.getElementById('gallery').innerHTML = '';
     document.getElementById('downloadRow').style.display = 'none';
+    document.getElementById('mixed-content-warning').style.display = 'none';
     setButtons(true);
 
     const angle = 360 / count;
@@ -270,9 +282,12 @@
       addThumbnail(blob, i);
 
       setStatus('Rotating ' + angle.toFixed(1) + '\u00b0...');
-      const rotated = await rotateEsp(ip, angle);
-      if (!rotated) {
-        setStatus('\u26a0\ufe0f ESP connection failed \u2014 check IP and CORS header.');
+      const rotResult = await rotateEsp(ip, angle);
+      if (!rotResult.ok) {
+        setStatus('\u26a0\ufe0f ' + rotResult.error);
+        if (rotResult.mixedContent) {
+          document.getElementById('mixed-content-warning').style.display = 'block';
+        }
         running = false;
         break;
       }
@@ -289,9 +304,10 @@
     if (running) {
       setProgress(count, count);
       setStatus('Done! ' + images.length + ' images captured.');
-    } else {
-      setStatus('Stopped. ' + images.length + ' images captured.');
+    } else if (stoppedByUser) {
+      setStatus('Stopped by user. ' + images.length + ' images captured.');
     }
+    // (if stopped by error, message was already set in the loop — do not overwrite)
 
     running = false;
     setButtons(false);
@@ -302,6 +318,7 @@
 
   function stopCapture() {
     running = false;
+    stoppedByUser = true;
     setStatus('Stopping after current step...');
   }
 
@@ -336,13 +353,45 @@
     document.getElementById('gallery').appendChild(img);
   }
 
+  // Returns {ok: true} or {ok: false, error: '...', mixedContent: bool}
   async function rotateEsp(ip, angle) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 8000);
     try {
-      const resp = await fetch(`http://${ip}/rotate?motor=1&angle=${angle}`, { signal: AbortSignal.timeout(8000) });
-      return resp.ok;
+      const resp = await fetch(`http://${ip}/rotate?angle=${angle}`, { signal: ctrl.signal });
+      clearTimeout(timer);
+      if (!resp.ok) return { ok: false, error: 'ESP returned ' + resp.status + '. Check IP.' };
+      return { ok: true };
     } catch (e) {
-      return false;
+      clearTimeout(timer);
+      if (e.name === 'AbortError') {
+        return { ok: false, error: 'Request timed out. Is the ESP IP correct?' };
+      }
+      const isMixed = window.location.protocol === 'https:';
+      const msg = isMixed
+        ? 'Cannot reach ESP over HTTP from HTTPS page (mixed content). See warning below.'
+        : 'Connection failed: ' + (e.message || e);
+      return { ok: false, error: msg, mixedContent: isMixed };
     }
+  }
+
+  async function testRotate() {
+    const ip = document.getElementById('ip').value.trim();
+    if (!ip) { alert('Enter the ESP IP address first.'); return; }
+    const btn = document.getElementById('btnTest');
+    btn.disabled = true;
+    setStatus('Testing connection — rotating 10\u00b0...');
+    document.getElementById('mixed-content-warning').style.display = 'none';
+    const result = await rotateEsp(ip, 10);
+    if (result.ok) {
+      setStatus('\u2705 ESP connected! Motor rotating 10\u00b0.');
+    } else {
+      setStatus('\u26a0\ufe0f ' + result.error);
+      if (result.mixedContent) {
+        document.getElementById('mixed-content-warning').style.display = 'block';
+      }
+    }
+    btn.disabled = false;
   }
 
   async function waitForMotorDone(ip, timeoutMs) {
